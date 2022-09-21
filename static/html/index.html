@@ -1,0 +1,44 @@
+{{ define "index.html" }}
+<html lang="zh-cn">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>京东薅羊毛cookie提取</title>
+    <!--    <script type="text/javascript" src="./assets/js/jquery.min.js"></script>-->
+    <script src="https://code.jquery.com/jquery-2.2.0.min.js"></script>
+    <script>if (typeof module === 'object') {
+        window.jQuery = window.$ = module.exports;
+    }
+    ;</script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/codemirror/5.62.2/codemirror.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/codemirror/5.62.2/addon/comment/comment.min.js"></script>
+
+    <link rel="icon" type="image/x-icon" href="https://www.jd.com/favicon.ico"/>
+</head>
+<body id="body" οndragstart="return false;" οncοntextmenu="return false;">
+<h1>首页</h1>
+<button>1.开始操作</button>
+<div></div>
+<input id="phone" type="text" placeholder="2.手机号">
+<button id="phonesubmit">确认</button>
+<div></div>
+<button id="captcha">3.查看验证码并解决它</button>
+<div></div>
+<input id="smscode" type="text" placeholder="4.手机验证码">
+<button id="smssubmit">确认</button>
+<div></div>
+<button id="exit">5.结束操作</button>
+<div></div>
+<h2>一些其他方法</h2>
+<button id="screenshort">查看无头浏览器实时截图</button>
+<br/>
+<button id="pagesource">查看京东页面源码</button>
+<script>
+    $(document).ready(function () {
+
+    });
+
+</script>
+</body>
+{{end}}

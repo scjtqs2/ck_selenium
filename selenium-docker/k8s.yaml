@@ -1,0 +1,144 @@
+---
+## chrome 相关的配置
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: seleniarm-hub
+  namespace: cqhttp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seleniarm-hub
+  template:
+    metadata:
+      labels:
+        app: seleniarm-hub
+    spec:
+      containers:
+        - name: seleniarm-hub
+          image: seleniarm/hub:4.1.2-20220222
+          ports:
+            - containerPort: 4442
+            - containerPort: 4443
+            - containerPort: 4444
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+          resources:
+            limits:
+              cpu: 500m
+              memory: 500Mi
+            requests:
+              cpu: 50m
+              memory: 200Mi
+          livenessProbe:
+            tcpSocket:
+              port: 4444
+            initialDelaySeconds: 60
+            timeoutSeconds: 1
+            periodSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          imagePullPolicy: Always
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      nodeSelector: { }
+      securityContext: { }
+      schedulerName: default-scheduler
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
+
+---
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: chrome
+  namespace: cqhttp
+spec:
+  replicas: 8
+  selector:
+    matchLabels:
+      app: chrome
+  template:
+    metadata:
+      labels:
+        app: chrome
+    spec:
+      containers:
+        - name: chrome
+          image: seleniarm/node-chromium:4.1.2-20220222
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+            - name: SE_EVENT_BUS_HOST
+              value: seleniarm-hub
+            - name: SE_EVENT_BUS_PUBLISH_PORT
+              value: "4442"
+            - name: SE_EVENT_BUS_SUBSCRIBE_PORT
+              value: "4443"
+          resources:
+            limits:
+              cpu: 500m
+              memory: 500Mi
+            requests:
+              cpu: 50m
+              memory: 200Mi
+          livenessProbe:
+            tcpSocket:
+              port: 5555
+            initialDelaySeconds: 60
+            timeoutSeconds: 1
+            periodSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          imagePullPolicy: Always
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      nodeSelector: { }
+      securityContext: { }
+      schedulerName: default-scheduler
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
+
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: seleniarm-hub
+  namespace: cqhttp
+  labels:
+    app: seleniarm-hub
+spec:
+  ports:
+    - name: http-4442
+      protocol: TCP
+      port: 4442
+      targetPort: 4442
+    - name: http-4443
+      protocol: TCP
+      port: 4443
+      targetPort: 4443
+    - name: http-4444
+      protocol: TCP
+      port: 4444
+      targetPort: 4444
+  selector:
+    app: seleniarm-hub
+  type: ClusterIP

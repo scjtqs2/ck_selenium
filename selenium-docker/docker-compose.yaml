@@ -1,0 +1,85 @@
+version: "3.9"
+services:
+  chrome:
+    image: seleniarm/node-chromium:4.1.2-20220222
+    volumes:
+      - /dev/shm:/dev/shm
+    depends_on:
+      - seleniarm-hub
+    environment:
+      - SE_EVENT_BUS_HOST=seleniarm-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+    #    ports:
+    #      - "6900:5900"
+    restart: always
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      mode: replicated
+#      endpoint_mode: vip
+      replicas: 8
+      resources:
+        limits:
+          cpus: "2"
+          memory: 500M
+        reservations:
+          cpus: '0.25'
+          memory: 200M
+
+#  firefox:
+#    image: seleniarm/node-firefox:4.1.2-20220222
+#    volumes:
+#      - /dev/shm:/dev/shm
+#    depends_on:
+#      - seleniarm-hub
+#    environment:
+#      - SE_EVENT_BUS_HOST=seleniarm-hub
+#      - SE_EVENT_BUS_PUBLISH_PORT=4442
+#      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+#    #    ports:
+#    #      - "6905:5900"
+#    deploy:
+#      restart_policy:
+#        condition: on-failure
+#        delay: 5s
+#        max_attempts: 3
+#        window: 120s
+#      mode: replicated
+#      #endpoint_mode: vip
+#      replicas: 4
+#      resources:
+#        limits:
+#          cpus: "2"
+#          memory: 500M
+#        reservations:
+#          cpus: '0.25'
+#          memory: 200M
+
+  seleniarm-hub:
+    image: seleniarm/hub:4.1.2-20220222
+    container_name: seleniarm-hub
+    restart: always
+    ports:
+      - "4442:4442"
+      - "4443:4443"
+      - "4444:4444"
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      mode: replicated
+#      endpoint_mode: vip
+      replicas: 1
+      resources:
+        limits:
+          cpus: "2"
+          memory: 500M
+        reservations:
+          cpus: '0.25'
+          memory: 200M
