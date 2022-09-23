@@ -1,8 +1,11 @@
 package app
 
 import (
+	"bytes"
+	"embed"
 	"fmt"
 	"github.com/google/uuid"
+	"html/template"
 	"net"
 	"os"
 	"runtime"
@@ -20,6 +23,12 @@ type Captcha struct {
 	X    int
 	Y    int
 	Tips string
+}
+
+type WebHook struct {
+	Url    string
+	Method string
+	Key    string
 }
 
 // 格式化年月日
@@ -123,4 +132,65 @@ func pickUnusedPort() (int, error) {
 		return 0, err
 	}
 	return port, nil
+}
+
+// Msg 消息结构体
+type Msg struct {
+	Msg  string // 错误/成功 信息
+	URL  string // 跳转地址
+	Wait int64  // 跳转等待时间 秒
+}
+
+// HTMLFilesHandler 从路径读取模板
+func HTMLFilesHandler(data Msg, files ...string) (template.HTML, error) {
+	if data.Wait == 0 {
+		data.Wait = 3
+	}
+	cbuf := new(bytes.Buffer)
+	t, err := template.ParseFS(GetStaticFs(), files...)
+	if err != nil {
+		return "", err
+	} else if err := t.Execute(cbuf, data); err != nil {
+		return "", err
+	}
+	return template.HTML(cbuf.String()), err
+}
+
+// HTMLFilesHandlerString 从路径读取模板字符串
+func HTMLFilesHandlerString(data Msg, files ...string) (string, error) {
+	if data.Wait == 0 {
+		data.Wait = 3
+	}
+	cbuf := new(bytes.Buffer)
+	t, err := template.ParseFS(GetStaticFs(), files...)
+	if err != nil {
+		return "", err
+	} else if err := t.Execute(cbuf, data); err != nil {
+		return "", err
+	}
+	return cbuf.String(), err
+}
+
+var f embed.FS
+
+// GetStaticFs 获取静态资源打包对象
+func GetStaticFs() embed.FS {
+	return f
+}
+
+// Asset loads and returns the asset for the given name.
+// It returns an error if the asset could not be found or
+// could not be loaded.
+func Asset(name string) ([]byte, error) {
+	return f.ReadFile(name)
+}
+
+// AssetNames returns the names of the assets.
+func AssetNames() []string {
+	ds, _ := f.ReadDir("static/html")
+	names := make([]string, 0, len(ds))
+	for _, d := range ds {
+		names = append(names, fmt.Sprintf("static/html/%s", d.Name()))
+	}
+	return names
 }

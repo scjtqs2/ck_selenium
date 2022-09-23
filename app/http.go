@@ -1,116 +1,154 @@
-/**
- * Copyright (c) 2022 Oray Inc. All rights reserved.
- *
- * No Part of this file may be reproduced, stored
- * in a retrieval system, or transmitted, in any form, or by any means,
- * electronic, mechanical, photocopying, recording, or otherwise,
- * without the prior consent of Oray Inc.
- *
- *
- * @author qiushi
- */
 package app
 
 import (
 	"embed"
 	"encoding/base64"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
+	"github.com/guonaihong/gout"
+	"github.com/guonaihong/gout/dataflow"
+	"github.com/kataras/iris/v12"
+	"github.com/kataras/iris/v12/sessions"
+	"github.com/kataras/iris/v12/sessions/sessiondb/boltdb"
 	log "github.com/sirupsen/logrus"
-	"github.com/tebeka/selenium"
+	"github.com/stitch-june/selenium"
 	"go.uber.org/dig"
-	"html/template"
-	"io"
 	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 )
 
+type SeSessionTime struct {
+	T  int64
+	Se SeInterface
+}
+
 type HttpServer struct {
-	engine *gin.Engine
-	HTTP   *http.Server
-	ct     *dig.Container
-	Se     SeInterface
+	engine  *iris.Application
+	HTTP    *http.Server
+	ct      *dig.Container
+	Se      map[string]*SeSessionTime
+	Mux     sync.Mutex
+	Session *sessions.Sessions
 }
 
 type MoveBody struct {
-	Type string  `json:"type"`
+	Type string  `json:"type"` // 鼠标类型
 	X    float64 `json:"x"`
 	Y    float64 `json:"y"`
+	T    int64   `json:"t"` // 间隔时间
 }
 
 func NewHttp(ct *dig.Container) *HttpServer {
 	var s HttpServer
-	var f embed.FS
+	s.Mux = sync.Mutex{}
+	s.Se = make(map[string]*SeSessionTime)
 	ct.Invoke(func(static embed.FS) {
 		f = static
 	})
-	gin.SetMode(gin.ReleaseMode)
-	s.engine = gin.New()
 
-	s.engine.Use(func(c *gin.Context) {
-		if c.Request.Method != "GET" && c.Request.Method != "POST" {
-			log.Warnf("已拒绝客户端 %v 的请求: 方法错误", c.Request.RemoteAddr)
-			c.Status(404)
-			return
-		}
-		c.Next()
+	db, err := boltdb.New("./tmp/sessions.db", os.FileMode(0750))
+	if err != nil {
+		panic(err)
+	}
+
+	// close and unlobkc the database when control+C/cmd+C pressed
+	iris.RegisterOnInterrupt(func() {
+		db.Close()
 	})
+
+	defer db.Close() // close and unlock the database if application errored.
+	sess := sessions.New(sessions.Config{
+		Cookie:       "sessionscookieid",
+		Expires:      2 * time.Hour, // <=0 means unlimited life. Defaults to 0.
+		AllowReclaim: true,
+	})
+
+	//
+	// IMPORTANT:
+	//
+	sess.UseDatabase(db)
+	s.Session = sess
+	s.engine = iris.New()
+	s.ct = ct
+	s.engine.Use(sess.Handler())
+	// s.engine.Use(func(c iris.Context) {
+	// 	if c.Method() != "GET" && c.Method() != "POST" {
+	// 		log.Warnf("已拒绝客户端 %v 的请求: 方法错误", c.Request().RemoteAddr)
+	// 		c.NotFound()
+	// 		return
+	// 	}
+	// 	c.Next()
+	// })
 	// 自动加载模板
-	// t := template.New("tmp")
-	// 从二进制中加载模板（后缀必须.html)
-	templ := template.Must(template.New("").ParseFS(f, "static/html/*.html"))
-	s.engine.SetHTMLTemplate(templ)
-	s.engine.GET("/captcha", s.getCaptcha)
-	s.engine.POST("/captchactions", s.actions)
-	s.engine.GET("/screenshort", func(context *gin.Context) {
-		context.HTML(http.StatusOK, "screenshort.html", nil)
+	s.engine.RegisterView(iris.HTML("static/html", ".html").Binary(Asset, AssetNames))
+	// s.engine.SetHTMLTemplate(templ)
+	s.engine.Get("/", func(context iris.Context) {
+		s.initSeBySession(context)
+		context.View("passwordlogin.html")
 	})
-	s.engine.GET("/screenshortnow", s.getscreenShort)
-	s.engine.GET("/pagesource", s.getPageSource)
+	s.engine.Get("/captcha", s.getCaptcha)
+	s.engine.Post("/captchactions", s.actions)
+	s.engine.Get("/screenshort", func(context iris.Context) {
+		s.initSeBySession(context)
+		context.View("screenshort.html")
+	})
+	s.engine.Get("/screenshortnow", s.getscreenShort)
+	s.engine.Get("/pagesource", s.getPageSource)
+	s.engine.Get("/checkcookie", s.checkCookie)       // 校验cookie
+	s.engine.Post("/nomalLogin", s.nomalLogin)        // 账号密码方式登录
+	s.engine.Get("/secondsms", s.secondsms)           // 二次短信认证
+	s.engine.Get("/entersecondsms", s.entersecondsms) // 二次短信认证
+	s.engine.Get("/exit", s.exit)
 	go func() {
-		s.HTTP = &http.Server{
-			Addr:    fmt.Sprintf(":%d", 9999),
-			Handler: s.engine,
+		port := "9999"
+		if os.Getenv("HTTP_PORT") != "" {
+			port = os.Getenv("HTTP_PORT")
 		}
-		if err := s.HTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error(err)
-			log.Infof("HTTP 服务启动失败, 请检查端口是否被占用.")
-			log.Warnf("将在五秒后退出.")
-			time.Sleep(time.Second * 5)
-			os.Exit(1)
+		err = s.engine.Run(iris.Addr(":" + port))
+		if err != nil {
+			log.Fatalf("error init http listen port %s err:%v", port, err)
 		}
 	}()
+	go s.cleanSes()
 	return &s
 }
 
-func (h *HttpServer) getCaptcha(ctx *gin.Context) {
-	ca, err := h.Se.GetCaptcha()
-	if err != nil {
-		ctx.Error(err)
-		ctx.Abort()
+func (h *HttpServer) getCaptcha(ctx iris.Context) {
+	se := h.getSeFromCtx(ctx)
+	if se == nil {
+		ctx.JSON(map[string]interface{}{
+			"code": 0,
+			"msg":  "not init",
+		})
+		return
 	}
-	ctx.HTML(http.StatusOK, "captcha.html", gin.H{
-		"ImgSrc": ca.Src,
-		"x":      ca.X,
-		"y":      ca.Y,
-		"tips":   ca.Tips,
-	})
+	ca, err := se.GetCaptcha()
+	if err != nil {
+		ctx.Problem(err)
+		return
+	}
+	if ca == nil {
+		ctx.Problem(errors.New("no captcha"))
+		return
+	}
+	ctx.ViewData("ImgSrc", ca.Src)
+	ctx.ViewData("x", ca.X)
+	ctx.ViewData("y", ca.Y)
+	ctx.ViewData("tips", ca.Tips)
+	ctx.View("captcha.html")
 }
 
-func (h *HttpServer) actions(c *gin.Context) {
+func (h *HttpServer) actions(c iris.Context) {
 	var reqInfo []MoveBody
-	b, err := io.ReadAll(c.Request.Body)
-	println(string(b))
-	defer c.Request.Body.Close()
+	err := c.ReadJSON(&reqInfo)
 	if err != nil {
-		c.Error(err)
-		c.Abort()
+		c.Problem(err)
+		return
 	}
-	json.Unmarshal(b, &reqInfo)
 	action := make([]selenium.PointerAction, 0)
 	rand.Seed(time.Now().UnixMilli())
 	for _, body := range reqInfo {
@@ -118,42 +156,363 @@ func (h *HttpServer) actions(c *gin.Context) {
 		y, _ := strconv.Atoi(fmt.Sprintf("%1.0f", body.Y))
 		switch body.Type {
 		case "start":
-			action = append(action, selenium.PointerMoveAction(6, selenium.Point{X: x, Y: y}, selenium.FromViewport))
-			action = append(action, selenium.PointerPauseAction(time.Duration(rand.Intn(250))))
+			action = append(action, selenium.PointerMoveAction(0, selenium.Point{X: x, Y: y}, selenium.FromViewport))
 			action = append(action, selenium.PointerDownAction(selenium.LeftButton))
-			action = append(action, selenium.PointerPauseAction(time.Duration(rand.Intn(250))))
 		case "end":
-			action = append(action, selenium.PointerMoveAction(6, selenium.Point{X: x, Y: y}, selenium.FromViewport))
-			action = append(action, selenium.PointerPauseAction(time.Duration(rand.Intn(250))))
+			action = append(action, selenium.PointerPauseAction(time.Microsecond*time.Duration(body.T)))
+			action = append(action, selenium.PointerMoveAction(0, selenium.Point{X: x, Y: y}, selenium.FromViewport))
 			action = append(action, selenium.PointerUpAction(selenium.LeftButton))
 		case "move":
-			action = append(action, selenium.PointerMoveAction(6, selenium.Point{X: x, Y: y}, selenium.FromPointer))
-			action = append(action, selenium.PointerPauseAction(time.Duration(rand.Intn(250))))
+			action = append(action, selenium.PointerPauseAction(time.Microsecond*time.Duration(body.T)))
+			action = append(action, selenium.PointerMoveAction(0, selenium.Point{X: x, Y: y}, selenium.FromViewport))
 		}
 	}
-	h.Se.CheckCaptcha2(action)
-	c.JSON(http.StatusOK, gin.H{
+	se := h.getSeFromCtx(c)
+	if se == nil {
+		c.JSON(map[string]interface{}{
+			"code": 0,
+			"msg":  "not init",
+		})
+		return
+	}
+	h.getSeFromCtx(c).CheckCaptcha2(action)
+	c.JSON(map[string]interface{}{
 		"code": 0,
 	})
 }
 
-func (h *HttpServer) getscreenShort(c *gin.Context) {
-	imgByte, err := h.Se.GetScreenShort()
+func (h *HttpServer) getscreenShort(c iris.Context) {
+	se := h.getSeFromCtx(c)
+	if se == nil {
+		c.StatusCode(http.StatusForbidden)
+		return
+	}
+	imgByte, err := h.getSeFromCtx(c).GetScreenShort()
 	if err != nil {
-		c.Error(err)
+		c.Problem(err)
 		return
 	}
 	src := fmt.Sprintf("data:image/png;base64,%s", base64.StdEncoding.EncodeToString(imgByte))
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(map[string]interface{}{
 		"src": src,
 	})
 }
 
-func (h *HttpServer) getPageSource(c *gin.Context) {
-	src, err := h.Se.GetSource()
-	if err != nil {
-		c.Error(err)
+func (h *HttpServer) getPageSource(c iris.Context) {
+	se := h.getSeFromCtx(c)
+	if se == nil {
+		c.JSON(map[string]interface{}{
+			"code": 0,
+			"msg":  "not init",
+		})
 		return
 	}
-	c.Data(http.StatusOK, "html", []byte(src))
+	src, err := h.getSeFromCtx(c).GetSource()
+	if err != nil {
+		c.Problem(err)
+		return
+	}
+	c.HTML(src)
+}
+
+// 推送到远程服务器
+func (h *HttpServer) PostWebHookCk(cookie string) (string, error) {
+	var webhook WebHook
+	var err error
+	var msg string
+	// //发送数据给 挂机服务器
+	h.ct.Invoke(func(hook WebHook) {
+		webhook = hook
+	})
+	postUrl := webhook.Url
+	if postUrl != "" {
+		var res string
+		code := 0
+		var flow *dataflow.DataFlow
+		switch webhook.Method {
+		case "GET":
+			flow = gout.GET(webhook.Url).SetQuery(gout.H{
+				webhook.Key: cookie,
+			})
+			break
+		case "POST":
+			flow = gout.POST(postUrl).SetWWWForm(
+				gout.H{
+					webhook.Key: cookie,
+				},
+			)
+			break
+		default:
+			flow = gout.POST(postUrl)
+			break
+		}
+		err = flow.
+			Debug(false).
+			BindBody(&res).
+			SetHeader(gout.H{
+				"Connection":   "Keep-Alive",
+				"Content-Type": "application/x-www-form-urlencoded; Charset=UTF-8",
+				"Accept":       "application/json, text/plain, */*",
+				"User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.111 Safari/537.36",
+			}).
+			Code(&code).
+			SetTimeout(timeout).
+			F().Retry().Attempt(5).
+			WaitTime(time.Millisecond * 500).MaxWaitTime(time.Second * 5).
+			Do()
+		if err != nil || code != 200 {
+			log.Errorf("upsave notify post  usercookie to %s, res=%s faild err=%v, http_code=%d", postUrl, res, err, code)
+			msg = fmt.Sprintf("upsave notify post  usercookie to %s, res=%s faild err=%v, http_code=%d", postUrl, res, err, code)
+		} else {
+			log.Infof("upsave to url %s post usercookie=%s success res=%s", postUrl, cookie, res)
+			msg = fmt.Sprintf("upsave to url %s post usercookie=%s success res=%s", postUrl, cookie, res)
+		}
+		return msg, err
+	}
+	return msg, err
+}
+
+func (h *HttpServer) checkCookie(ctx iris.Context) {
+	se := h.getSeFromCtx(ctx)
+	if se == nil {
+		ctx.StatusCode(http.StatusForbidden)
+		ctx.JSON(map[string]interface{}{
+			"code": 0,
+			"msg":  "not init",
+		})
+		return
+	}
+	ck, err := h.getSeFromCtx(ctx).GetCookie()
+	if err != nil {
+		log.Errorf("get cookie error,%v", err)
+		ctx.JSON(map[string]interface{}{
+			"code": 400,
+			"msg":  err.Error(),
+		})
+		return
+	}
+	if ck != "" {
+		log.Infof("cookie %s", ck)
+		msg, err := h.PostWebHookCk(ck)
+		if err != nil {
+			ctx.JSON(map[string]interface{}{
+				"code": 400,
+				"msg":  msg,
+			})
+			return
+		}
+		defer h.getSeFromCtx(ctx).Quit()
+		if msg != "" && err == nil {
+			ctx.JSON(map[string]interface{}{
+				"code": 0,
+				"msg":  msg,
+			})
+		}
+	}
+}
+
+func (h *HttpServer) nomalLogin(ctx iris.Context) {
+	type Login struct {
+		Name   string `json:"name"`
+		Passwd string `json:"passwd"`
+	}
+	var reqInfo Login
+
+	err := ctx.ReadJSON(&reqInfo)
+	if err != nil {
+		ctx.JSON(map[string]interface{}{
+			"code": 400,
+			"msg":  err.Error(),
+		})
+		return
+	}
+	h.initSeBySession(ctx)
+	se := h.getSeFromCtx(ctx)
+	if se == nil || se.GetWd() == nil {
+		ctx.JSON(map[string]interface{}{
+			"code": 0,
+			"msg":  "not init",
+		})
+		return
+	}
+	err = h.getSeFromCtx(ctx).SeRun()
+	if err != nil {
+		ctx.JSON(map[string]interface{}{
+			"code": 400,
+			"msg":  err.Error(),
+		})
+		return
+	}
+	time.Sleep(2 * time.Second)
+	err = h.getSeFromCtx(ctx).ChangeLoginType()
+	if err != nil {
+		ctx.JSON(map[string]interface{}{
+			"code": 400,
+			"msg":  err.Error(),
+		})
+		return
+	}
+	err = h.getSeFromCtx(ctx).EnterUserName(reqInfo.Name)
+	if err != nil {
+		ctx.JSON(map[string]interface{}{
+			"code": 400,
+			"msg":  err.Error(),
+		})
+		return
+	}
+	err = h.getSeFromCtx(ctx).EnterPasswd(reqInfo.Passwd)
+	if err != nil {
+		ctx.JSON(map[string]interface{}{
+			"code": 400,
+			"msg":  err.Error(),
+		})
+		return
+	}
+	err = h.getSeFromCtx(ctx).SubmitLogin()
+	if err != nil {
+		ctx.JSON(map[string]interface{}{
+			"code": 400,
+			"msg":  err.Error(),
+		})
+		return
+	}
+
+	ctx.JSON(map[string]interface{}{
+		"code": 0,
+		"msg":  "ok",
+	})
+}
+
+func (h *HttpServer) secondsms(ctx iris.Context) {
+	se := h.getSeFromCtx(ctx)
+	if se == nil {
+		ctx.JSON(map[string]interface{}{
+			"code": 0,
+			"msg":  "not init",
+		})
+		return
+	}
+	h.getSeFromCtx(ctx).SecondSmsCheck()
+	h.getSeFromCtx(ctx).SecondSmsSend()
+	ctx.View("secondsms.html")
+}
+
+func (h *HttpServer) entersecondsms(ctx iris.Context) {
+	smscode := ctx.Params().Get("smscode")
+	se := h.getSeFromCtx(ctx)
+	if se == nil {
+		ctx.JSON(map[string]interface{}{
+			"code": 0,
+			"msg":  "not init",
+		})
+		return
+	}
+	err := h.getSeFromCtx(ctx).EnterSecondSmsCode(smscode)
+	if err != nil {
+		ctx.JSON(map[string]interface{}{
+			"code": 400,
+			"msg":  err.Error(),
+		})
+		return
+	} else {
+		ctx.JSON(map[string]interface{}{
+			"code": 0,
+			"msg":  "ok",
+		})
+	}
+}
+
+func (h *HttpServer) exit(ctx iris.Context) {
+	se := h.getSeFromCtx(ctx)
+	if se == nil {
+		ctx.JSON(map[string]interface{}{
+			"code": 0,
+			"msg":  "not init",
+		})
+		return
+	}
+	defer h.getSeFromCtx(ctx).Quit()
+	ck, err := h.getSeFromCtx(ctx).GetCookie()
+	if err != nil {
+		log.Errorf("get cookie error,%v", err)
+		ctx.JSON(map[string]interface{}{
+			"code": 400,
+			"msg":  err.Error(),
+		})
+		return
+	}
+	if ck != "" {
+		log.Infof("cookie %s", ck)
+		msg, err := h.PostWebHookCk(ck)
+		if err != nil {
+			ctx.JSON(map[string]interface{}{
+				"code": 400,
+				"msg":  msg,
+			})
+			return
+		}
+		if msg != "" && err == nil {
+			ctx.JSON(map[string]interface{}{
+				"code": 0,
+				"msg":  msg,
+			})
+		}
+	}
+}
+
+func (h *HttpServer) initSeBySession(ctx iris.Context) {
+	session := sessions.Get(ctx)
+	id := session.ID()
+	if h.getSe(id) == nil || h.getSe(id).GetWd() != nil {
+		h.setSe(id, NewWdService(h.ct))
+	}
+	return
+}
+
+func (h *HttpServer) getSe(id string) SeInterface {
+	defer h.Mux.Unlock()
+	h.Mux.Lock()
+	if se, ok := h.Se[id]; ok {
+		return se.Se
+	}
+	return nil
+}
+
+func (h *HttpServer) getAllSe() map[string]*SeSessionTime {
+	defer h.Mux.Unlock()
+	h.Mux.Lock()
+	all := make(map[string]*SeSessionTime)
+	for s, sessionTime := range h.Se {
+		all[s] = sessionTime
+	}
+	return all
+}
+
+func (h *HttpServer) setSe(id string, se SeInterface) {
+	defer h.Mux.Unlock()
+	h.Mux.Lock()
+	h.Se[id] = &SeSessionTime{
+		T:  time.Now().Unix(),
+		Se: se,
+	}
+}
+
+func (h *HttpServer) getSeFromCtx(ctx iris.Context) SeInterface {
+	session := sessions.Get(ctx)
+	id := session.ID()
+	return h.getSe(id)
+}
+
+func (h *HttpServer) cleanSes() {
+	for {
+		time.Sleep(time.Second * 5)
+		all := h.getAllSe()
+		for id, sessionTime := range all {
+			t := time.Now().Unix()
+			if (t - sessionTime.T) > 60*20 {
+				sessionTime.Se.Quit()
+				h.setSe(id, sessionTime.Se)
+			}
+		}
+	}
 }

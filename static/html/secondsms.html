@@ -1,0 +1,46 @@
+{{ define "secondsms.html" }}
+<html lang="zh-cn" xmlns="http://www.w3.org/1999/html" xmlns="http://www.w3.org/1999/html"
+      xmlns="http://www.w3.org/1999/html">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>二次短信认证</title>
+    <!--    <script type="text/javascript" src="./assets/js/jquery.min.js"></script>-->
+    <script src="https://code.jquery.com/jquery-2.2.0.min.js"></script>
+    <script>if (typeof module === 'object') {
+        window.jQuery = window.$ = module.exports;
+    }
+    ;</script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/codemirror/5.62.2/codemirror.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/codemirror/5.62.2/addon/comment/comment.min.js"></script>
+
+    <link rel="icon" type="image/x-icon" href="https://www.jd.com/favicon.ico"/>
+</head>
+<body id="body" οndragstart="return false;" οncοntextmenu="return false;">
+<h1>输入第二次短信验证的验证码</h1>
+<input id="smscode" type="text" placeholder="验证码">
+<button id="submit">输入</button>
+<div></div>
+
+<script>
+    $(document).ready(function () {
+        $("#submit").click(function () {
+            $.ajax({
+                type: "get",
+                url: "/entersecondsms",
+                dataType: "json",
+                data: {"smscode": $("#smscode").val()},
+                success: function (ret) {
+                    if (ret.code === 0) {
+                        alert("输入完成")
+                    } else {
+                        alert(ret.msg)
+                    }
+                },
+            });
+        });
+    });
+</script>
+</body>
+{{end}}

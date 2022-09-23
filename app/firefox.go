@@ -6,9 +6,10 @@ import (
 	"errors"
 	"fmt"
 	log "github.com/sirupsen/logrus"
-	"github.com/tebeka/selenium"
-	"github.com/tebeka/selenium/firefox"
+	"github.com/stitch-june/selenium"
+	"github.com/stitch-june/selenium/firefox"
 	"go.uber.org/dig"
+	"os"
 	"runtime"
 	"time"
 )
@@ -25,6 +26,15 @@ type GeckoDriver struct {
 }
 
 func (ge *GeckoDriver) GetWd() selenium.WebDriver {
+	if ge.Wd == nil {
+		ge.Init()
+	}
+	if ge.Wd == nil {
+		return nil
+	}
+	if _, err := ge.Wd.Status(); err != nil {
+		ge.Wd.NewSession()
+	}
 	return ge.Wd
 }
 
@@ -37,7 +47,9 @@ func (ge *GeckoDriver) GetFileDriverPath() string {
 }
 
 func NewGeckoService(ct *dig.Container) SeInterface {
-	return &GeckoDriver{}
+	ch := &GeckoDriver{Ct: ct}
+	ch.Init()
+	return ch
 }
 
 // 获取 系统和架构，读取geckodriver的位置
@@ -115,7 +127,7 @@ func (ge *GeckoDriver) GetDriverPath(ct *dig.Container) (string, error) {
 	return fmt.Sprintf("%s/%s", dst, bfile), err
 }
 
-func (ge *GeckoDriver) SeRun(ct *dig.Container) (err error) {
+func (ge *GeckoDriver) Init() (err error) {
 	p, _ := pickUnusedPort()
 	// p := 18777
 	opts := []selenium.ServiceOption{
@@ -123,7 +135,7 @@ func (ge *GeckoDriver) SeRun(ct *dig.Container) (err error) {
 		// selenium.Output(os.Stderr), // Output debug information to STDERR.
 	}
 
-	ge.DriverPath, err = ge.GetDriverPath(ct)
+	ge.DriverPath, err = ge.GetDriverPath(ge.Ct)
 	if err != nil {
 		return err
 	}
@@ -149,10 +161,13 @@ func (ge *GeckoDriver) SeRun(ct *dig.Container) (err error) {
 	}
 	caps.AddFirefox(firefoxCaps)
 	// 调整浏览器长宽高
-	ge.Wd.ResizeWindow("", 375, 812)
+	return ge.Wd.ResizeWindow("", 375, 812)
+}
+func (ge *GeckoDriver) SeRun() (err error) {
 
+	ge.GetWd().DeleteAllCookies()
 	// Navigate to the simple playground interface.
-	if err = ge.Wd.Get("https://home.m.jd.com/myJd/newhome.action"); err != nil {
+	if err = ge.GetWd().Get("https://home.m.jd.com/myJd/newhome.action"); err != nil {
 		return err
 	}
 	// go ge.GetCookies(ct)
@@ -200,7 +215,7 @@ func (ch *GeckoDriver) SendSMS() error {
 
 func (ch *GeckoDriver) GetCaptcha() (*Captcha, error) {
 	if ch.Wd == nil {
-		return nil, errors.New("not init")
+		return &Captcha{}, errors.New("not init")
 	}
 	err := ch.Wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
 		_, err := wd.FindElement(selenium.ByXPATH, "//*[@id=\"captcha_dom\"]")
@@ -317,4 +332,106 @@ func (ch *GeckoDriver) EnterSmsCode(smsCode string) error {
 	}
 	err = input.SendKeys(smsCode)
 	return err
+}
+
+func (ch *GeckoDriver) ChangeLoginType() error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	check, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/p[1]/span[1]")
+	if err != nil {
+		return err
+	}
+	return check.Click()
+}
+
+func (ch *GeckoDriver) EnterUserName(user string) error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	check, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/p[2]/input")
+	if err != nil {
+		return err
+	}
+	if is, _ := check.IsSelected(); !is {
+		check.Click()
+	}
+	ele, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"username\"]")
+	if err != nil {
+		return err
+	}
+	return ele.SendKeys(user)
+}
+
+func (ch *GeckoDriver) EnterPasswd(passwd string) error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	ele, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"pwd\"]")
+	if err != nil {
+		return err
+	}
+	return ele.SendKeys(passwd)
+}
+
+func (ch *GeckoDriver) SubmitLogin() error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	sub, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/a")
+	if err != nil {
+		return err
+	}
+	return sub.Click()
+}
+
+func (ch *GeckoDriver) Close() {
+	ch.GetWd().Close()
+}
+
+func (ch *GeckoDriver) Quit() {
+	ch.GetWd().Quit()
+	ch.GetService().Stop()
+	os.RemoveAll(ch.GetFileDriverPath())
+}
+
+func (ch *GeckoDriver) SecondSmsCheck() error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	check, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/div[2]/div[2]/span/a/span")
+	if err != nil {
+		return err
+	}
+	return check.Click()
+}
+
+func (ch *GeckoDriver) SecondSmsSend() error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	btn, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/div[2]/div[2]/button")
+	if err != nil {
+		return err
+	}
+	return btn.Click()
+}
+
+func (ch *GeckoDriver) EnterSecondSmsCode(code string) error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	input, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/div[2]/div[2]/div/input")
+	if err != nil {
+		return err
+	}
+	err = input.SendKeys(code)
+	if err != nil {
+		return err
+	}
+	btn, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/div[2]/a[1]")
+	if err != nil {
+		return err
+	}
+	return btn.Click()
 }

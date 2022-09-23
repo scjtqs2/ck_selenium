@@ -1,23 +1,14 @@
-/**
- * Copyright (c) 2022 Oray Inc. All rights reserved.
- *
- * No Part of this file may be reproduced, stored
- * in a retrieval system, or transmitted, in any form, or by any means,
- * electronic, mechanical, photocopying, recording, or otherwise,
- * without the prior consent of Oray Inc.
- *
- *
- * @author qiushi
- */
 package app
 
 import (
+	"embed"
 	"errors"
 	"fmt"
 	log "github.com/sirupsen/logrus"
-	"github.com/tebeka/selenium"
-	"github.com/tebeka/selenium/chrome"
+	"github.com/stitch-june/selenium"
+	"github.com/stitch-june/selenium/chrome"
 	"go.uber.org/dig"
+	"io/fs"
 	"net/http"
 	"time"
 )
@@ -31,16 +22,19 @@ func (w *WdDriver) GetDriverPath(ct *dig.Container) (string, error) {
 	return "", nil
 }
 
-func (w *WdDriver) SeRun(ct *dig.Container) error {
+func (w *WdDriver) Init() error {
 	var err error
 	var urlll string
-	ct.Invoke(func(addr string) {
+	w.Ct.Invoke(func(addr string) {
 		urlll = addr
+	})
+	var f embed.FS
+	w.Ct.Invoke(func(static embed.FS) {
+		f = static
 	})
 	selenium.HTTPClient = &http.Client{
 		Timeout: time.Second * 10,
 	}
-
 	// chrome参数
 	caps := selenium.Capabilities{"browserName": "chrome"}
 	chromeCaps := chrome.Capabilities{
@@ -53,12 +47,15 @@ func (w *WdDriver) SeRun(ct *dig.Container) error {
 			},
 			UserAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1",
 		},
+		// ExcludeSwitches: []string{"enable-automation"},
+
 		Args: []string{
 			"--headless", // 设置Chrome无头模式，在linux下运行，需要设置这个参数，否则会报错
 			// "--no-sandbox",
 			"--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1",
 			"--window-size=375,812",
 		},
+		W3C: true,
 	}
 	caps.AddChrome(chromeCaps)
 
@@ -78,7 +75,18 @@ func (w *WdDriver) SeRun(ct *dig.Container) error {
 	if err != nil {
 		return err
 	}
-	w.Wd.ResizeWindow("", 375, 812)
+	stealthJs, err := fs.ReadFile(f, "static/js/stealth.min.js")
+	if err != nil {
+		return err
+	}
+	w.Wd.ExecuteChromeDPCommand("Page.addScriptToEvaluateOnNewDocument", map[string]string{
+		"source": string(stealthJs),
+	})
+	return w.Wd.ResizeWindow("", 375, 812)
+}
+func (w *WdDriver) SeRun() error {
+	var err error
+	w.GetWd().DeleteAllCookies()
 	if err = w.Wd.Get("https://home.m.jd.com/myJd/newhome.action"); err != nil {
 		return err
 	}
@@ -87,6 +95,16 @@ func (w *WdDriver) SeRun(ct *dig.Container) error {
 }
 
 func (w *WdDriver) GetWd() selenium.WebDriver {
+	if w.Wd == nil {
+		w.Init()
+	}
+
+	if w.Wd == nil {
+		return nil
+	}
+	if _, err := w.Wd.Status(); err != nil {
+		w.Wd.NewSession()
+	}
 	return w.Wd
 }
 
@@ -103,9 +121,11 @@ func (w *WdDriver) CheckLastVersion() (version string, err error) {
 }
 
 func NewWdService(ct *dig.Container) SeInterface {
-	return &WdDriver{
+	ch := &WdDriver{
 		Ct: ct,
 	}
+	ch.Init()
+	return ch
 }
 
 func (ch *WdDriver) EnterPhone(phone string) error {
@@ -145,7 +165,7 @@ func (ch *WdDriver) SendSMS() error {
 
 func (ch *WdDriver) GetCaptcha() (*Captcha, error) {
 	if ch.Wd == nil {
-		return nil, errors.New("not init")
+		return &Captcha{}, errors.New("not init")
 	}
 	err := ch.Wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
 		_, err := wd.FindElement(selenium.ByXPATH, "//*[@id=\"captcha_dom\"]")
@@ -171,6 +191,7 @@ func (ch *WdDriver) GetCaptcha() (*Captcha, error) {
 	}
 	Tips, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"captcha_modal\"]/div/div[3]/div")
 	if err != nil {
+
 		return nil, err
 	}
 	tips, _ := Tips.Text()
@@ -259,4 +280,107 @@ func (ch *WdDriver) EnterSmsCode(smsCode string) error {
 	}
 	err = input.SendKeys(smsCode)
 	return err
+}
+
+func (ch *WdDriver) ChangeLoginType() error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	check, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/p[1]/span[1]")
+	if err != nil {
+		return err
+	}
+	return check.Click()
+}
+
+func (ch *WdDriver) EnterUserName(user string) error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	check, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/p[2]/input")
+	if err != nil {
+		return err
+	}
+	if is, _ := check.IsSelected(); !is {
+		check.Click()
+	}
+	ele, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"username\"]")
+	if err != nil {
+		return err
+	}
+	return ele.SendKeys(user)
+}
+
+func (ch *WdDriver) EnterPasswd(passwd string) error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	ele, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"pwd\"]")
+	if err != nil {
+		return err
+	}
+	return ele.SendKeys(passwd)
+}
+
+func (ch *WdDriver) SubmitLogin() error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	sub, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/a")
+	if err != nil {
+		return err
+	}
+	return sub.Click()
+}
+
+func (ch *WdDriver) Close() {
+	ch.Wd.Close()
+}
+
+func (ch *WdDriver) Quit() {
+	if ch.Wd != nil {
+		ch.Wd.Quit()
+		ch.Wd = nil
+	}
+}
+
+func (ch *WdDriver) SecondSmsCheck() error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	check, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/div[2]/div[2]/span/a/span")
+	if err != nil {
+		return err
+	}
+	return check.Click()
+}
+
+func (ch *WdDriver) SecondSmsSend() error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	btn, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/div[2]/div[2]/button")
+	if err != nil {
+		return err
+	}
+	return btn.Click()
+}
+
+func (ch *WdDriver) EnterSecondSmsCode(code string) error {
+	if ch.Wd == nil {
+		return errors.New("not init")
+	}
+	input, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/div[2]/div[2]/div/input")
+	if err != nil {
+		return err
+	}
+	err = input.SendKeys(code)
+	if err != nil {
+		return err
+	}
+	btn, err := ch.Wd.FindElement(selenium.ByXPATH, "//*[@id=\"app\"]/div/div[2]/a[1]")
+	if err != nil {
+		return err
+	}
+	return btn.Click()
 }

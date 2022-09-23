@@ -37,15 +37,18 @@
 
     var startx, starty;
     var actions = []
+    var timeInMs
     //手指接触屏幕
     document.getElementById('body').addEventListener("touchstart", function (e) {
         startx = e.touches[0].pageX;
         starty = e.touches[0].pageY;
+        timeInMs = Date.now();
         console.log("start:" + startx + "," + starty);
         actions.push({
             "type": "start",
             "x": startx,
             "y": starty,
+            "t": 0,
         });
     }, false);
     //手指离开屏幕
@@ -54,11 +57,15 @@
         endx = e.changedTouches[0].pageX;
         endy = e.changedTouches[0].pageY;
         console.log("end:" + endx + "," + endy);
+        var t = Date.now() - timeInMs
+        timeInMs = Date.now();
         actions.push({
             "type": "end",
             "x": endx,
             "y": endy,
+            "t": t,
         });
+        timeInMs = Date.now();
         $.ajax({
             type: "post",
             url: "/captchactions",
@@ -70,22 +77,27 @@
     }, false);
     //手指在屏幕滑动
     document.getElementById('body').addEventListener("touchmove", function (e) {
-        var movex, movey;
+        var movex, movey, nowx, nowy;
         movex = e.touches[0].pageX - startx;
         movey = e.touches[0].pageY - starty;
         startx = e.touches[0].pageX
         starty = e.touches[0].pageY
+        nowx = e.touches[0].pageX
+        nowy = e.touches[0].pageY
+        var t = Date.now() - timeInMs
+        timeInMs = Date.now();
         console.log("move:" + movex + "," + movey);
         actions.push({
             "type": "move",
-            "x": movex,
-            "y": movey,
+            "x": nowx,
+            "y": nowy,
+            "t": t,
         });
     }, false);
 
 
-    function e(event){  // 定义事件对象标准化函数
-        if( ! event){  // 兼容IE浏览器
+    function e(event) {  // 定义事件对象标准化函数
+        if (!event) {  // 兼容IE浏览器
             event = window.event;
             event.target = event.srcElement;
             event.layerX = event.offsetX;
@@ -97,6 +109,7 @@
         // 计算鼠标指针的y轴距离
         return event;  // 返回标准化的事件对象
     }
+
     //鼠标事件处理
     document.onmousedown = function (event) {
         event = e(event);  // 获取标准事件对象
@@ -105,33 +118,44 @@
         o = event.target;  // 获取当前拖放的元素
         ox = parseInt(o.offsetLeft);  // 拖放元素的x轴坐标
         oy = parseInt(o.offsetTop);  // 拖放元素的y轴坐标
+        timeInMs = Date.now();
         console.log("start:" + startx + "," + starty);
         actions.push({
             "type": "start",
             "x": startx,
             "y": starty,
+            "t": 0,
         });
         document.onmousemove = move;  // 注册鼠标移动事件处理函数
         document.onmouseup = stop;  // 注册松开鼠标事件处理函数
     }
-    function move(event){  // 鼠标移动处理函数
+
+    function move(event) {  // 鼠标移动处理函数
         event = e(event);
-        var movex, movey;
+        var movex, movey, nowx, nowy;
         movex = event.movementX
         movey = event.movementY
+        nowx = event.mx
+        nowy = event.my
+        var t = Date.now() - timeInMs
+        timeInMs = Date.now();
         console.log("move:" + movex + "," + movey);
         actions.push({
             "type": "move",
-            "x": movex,
-            "y": movey,
+            "x": nowx,
+            "y": nowy,
+            "t": t,
         });
     }
-    function stop(event){  // 松开鼠标处理函数
+
+    function stop(event) {  // 松开鼠标处理函数
         event = e(event);
         ox = parseInt(o.offsetLeft);  // 记录拖放元素的x轴坐标
         oy = parseInt(o.offsetTop);  // 记录拖放元素的y轴坐标
-        mx = event.mx ;  // 记录鼠标指针的x轴坐标
-        my = event.my ;  // 记录鼠标指针的y轴坐标
+        mx = event.mx;  // 记录鼠标指针的x轴坐标
+        my = event.my;  // 记录鼠标指针的y轴坐标
+        var t = Date.now() - timeInMs
+        timeInMs = Date.now();
         o = document.onmousemove = document.onmouseup = null;
         // 释放所有操作对象
         console.log("end:" + mx + "," + my);
@@ -139,6 +163,7 @@
             "type": "end",
             "x": mx,
             "y": my,
+            "t": t,
         });
         $.ajax({
             type: "post",

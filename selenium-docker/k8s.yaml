@@ -4,7 +4,7 @@ kind: Deployment
 apiVersion: apps/v1
 metadata:
   name: seleniarm-hub
-  namespace: cqhttp
+  namespace: selenium
 spec:
   replicas: 1
   selector:
@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: seleniarm-hub
-          image: seleniarm/hub:4.1.2-20220222
+          image: seleniarm/hub:4.1.2-20220227
           ports:
             - containerPort: 4442
             - containerPort: 4443
@@ -62,9 +62,9 @@ kind: Deployment
 apiVersion: apps/v1
 metadata:
   name: chrome
-  namespace: cqhttp
+  namespace: selenium
 spec:
-  replicas: 8
+  replicas: 1
   selector:
     matchLabels:
       app: chrome
@@ -75,7 +75,7 @@ spec:
     spec:
       containers:
         - name: chrome
-          image: seleniarm/node-chromium:4.1.2-20220222
+          image: seleniarm/node-chromium:4.1.2-20220227
           env:
             - name: TZ
               value: Asia/Shanghai
@@ -85,6 +85,8 @@ spec:
               value: "4442"
             - name: SE_EVENT_BUS_SUBSCRIBE_PORT
               value: "4443"
+          ports:
+            - containerPort: 5900
           resources:
             limits:
               cpu: 500m
@@ -121,8 +123,27 @@ spec:
 kind: Service
 apiVersion: v1
 metadata:
+  name: chrome
+  namespace: selenium
+  labels:
+    app: chrome
+spec:
+  ports:
+    - name: vnc
+      protocol: TCP
+      port: 5900
+      targetPort: 5900
+
+  selector:
+    app: chrome
+  type: NodePort
+
+---
+kind: Service
+apiVersion: v1
+metadata:
   name: seleniarm-hub
-  namespace: cqhttp
+  namespace: selenium
   labels:
     app: seleniarm-hub
 spec:
@@ -142,3 +163,82 @@ spec:
   selector:
     app: seleniarm-hub
   type: ClusterIP
+
+---
+#########ck-selenium##########
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: ck-selenium
+  namespace: selenium
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ck-selenium
+  template:
+    metadata:
+      labels:
+        app: ck-selenium
+    spec:
+      containers:
+        - name: ck-selenium
+          image: scjtqs/jd_cookie:selenium
+          ports:
+            - containerPort: 9999
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+            - name: SELENIUM_CHROME_ADDR
+              value: http://seleniarm-hub:4444/wd/hub
+          resources:
+            limits:
+              cpu: 500m
+              memory: 500Mi
+            requests:
+              cpu: 50m
+              memory: 200Mi
+          livenessProbe:
+            tcpSocket:
+              port: 9999
+            initialDelaySeconds: 60
+            timeoutSeconds: 1
+            periodSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          imagePullPolicy: Always
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      nodeSelector: { }
+      securityContext: { }
+      schedulerName: default-scheduler
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
+
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: ck-selenium
+  namespace: selenium
+  labels:
+    app: ck-selenium
+spec:
+  ports:
+    - name: vnc
+      protocol: TCP
+      port: 9999
+      targetPort: 9999
+
+  selector:
+    app: ck-selenium
+  type: ClusterIP
+

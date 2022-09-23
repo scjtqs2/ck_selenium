@@ -1,18 +1,20 @@
 package app
 
 import (
-	"github.com/tebeka/selenium"
+	"github.com/stitch-june/selenium"
 	"go.uber.org/dig"
 )
 
 type SeInterface interface {
 	GetDriverPath(ct *dig.Container) (string, error)
-	SeRun(ct *dig.Container) error
+	Init() (err error)
+	SeRun() error
 	GetWd() selenium.WebDriver
 	GetService() *selenium.Service
 	GetFileDriverPath() string
 	CheckLastVersion() (version string, err error)
 	EnterPhone(phone string) error
+	EnterSmsCode(smsCode string) error
 	SendSMS() error
 	GetCaptcha() (*Captcha, error)
 	// CheckCaptcha(mouseType string, x, y int)
@@ -20,6 +22,15 @@ type SeInterface interface {
 	GetCookie() (string, error)
 	GetScreenShort() ([]byte, error)
 	GetSource() (string, error)
+	ChangeLoginType() error
+	EnterUserName(user string) error
+	EnterPasswd(passwd string) error
+	SubmitLogin() error
+	Close()
+	Quit()
+	SecondSmsCheck() error
+	SecondSmsSend() error
+	EnterSecondSmsCode(code string) error
 }
 
 var SeType string

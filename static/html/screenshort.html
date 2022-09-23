@@ -4,25 +4,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>京东薅羊毛cookie提取</title>
+    <title>实时截图</title>
     <!--    <script type="text/javascript" src="./assets/js/jquery.min.js"></script>-->
     <script src="https://code.jquery.com/jquery-2.2.0.min.js"></script>
-    <script>if (typeof module === 'object') {
-        window.jQuery = window.$ = module.exports;
-    }
-    ;</script>
-    <script src="https://cdn.bootcdn.net/ajax/libs/codemirror/5.62.2/codemirror.min.js"></script>
-    <script src="https://cdn.bootcdn.net/ajax/libs/codemirror/5.62.2/addon/comment/comment.min.js"></script>
-
     <link rel="icon" type="image/x-icon" href="https://www.jd.com/favicon.ico"/>
+    <style>
+        body, img {
+            margin: 0;
+            padding: 0;
+            border: 0;
+        }
+    </style>
 </head>
 <body id="body" οndragstart="return false;" οncοntextmenu="return false;">
-<p>无头浏览器截图</p>
-
 <img id="screen" src="" draggable="false"/>
 <script>
     $(document).ready(function () {
-
         var timer = setInterval(function () {
             $.ajax({
                 type: "get",
@@ -33,9 +30,178 @@
                     $("#screen").attr("src", result.src);
                 }
             });
-        }, 500);
+        }, 2000);
+
+        var timer = setInterval(function () {
+            $.ajax({
+                type: "get",
+                url: "/checkcookie",
+                dataType: "json",
+                data: null,
+                success: function (result) {
+                    if (result.code===0) {
+                        alert(result.msg)
+                    }
+                }
+            });
+        }, 2000);
     });
 
+</script>
+<script>
+    //监听oncontextmenu,设置 ‘return false’
+    document.oncontextmenu = function (e) {
+        return false
+        //或者 e.preventDefault()
+    }
+    // contextmenu 禁用右键菜单
+    document.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+    })
+
+    $(document).ready(function () {
+        $("#captcha").attr("src", "{{ .ImgSrc }}");
+    });
+
+    var startx, starty;
+    var actions = []
+    var timeInMs
+    //手指接触屏幕
+    document.getElementById('body').addEventListener("touchstart", function (e) {
+        startx = e.touches[0].pageX;
+        starty = e.touches[0].pageY;
+        timeInMs = Date.now();
+        console.log("start:" + startx + "," + starty);
+        actions.push({
+            "type": "start",
+            "x": startx,
+            "y": starty,
+            "t": 0,
+        });
+    }, false);
+    //手指离开屏幕
+    document.getElementById('body').addEventListener("touchend", function (e) {
+        var endx, endy;
+        endx = e.changedTouches[0].pageX;
+        endy = e.changedTouches[0].pageY;
+        console.log("end:" + endx + "," + endy);
+        var t = Date.now() - timeInMs
+        timeInMs = Date.now();
+        actions.push({
+            "type": "end",
+            "x": endx,
+            "y": endy,
+            "t": t,
+        });
+        timeInMs = Date.now();
+        $.ajax({
+            type: "post",
+            url: "/captchactions",
+            contentType: "application/json",
+            dataType: "json",
+            data: JSON.stringify(actions)
+        });
+        actions = []
+    }, false);
+    //手指在屏幕滑动
+    document.getElementById('body').addEventListener("touchmove", function (e) {
+        var movex, movey, nowx, nowy;
+        movex = e.touches[0].pageX - startx;
+        movey = e.touches[0].pageY - starty;
+        startx = e.touches[0].pageX
+        starty = e.touches[0].pageY
+        nowx = e.touches[0].pageX
+        nowy = e.touches[0].pageY
+        var t = Date.now() - timeInMs
+        timeInMs = Date.now();
+        console.log("move:" + movex + "," + movey);
+        actions.push({
+            "type": "move",
+            "x": nowx,
+            "y": nowy,
+            "t": t,
+        });
+    }, false);
+
+
+    function e(event) {  // 定义事件对象标准化函数
+        if (!event) {  // 兼容IE浏览器
+            event = window.event;
+            event.target = event.srcElement;
+            event.layerX = event.offsetX;
+            event.layerY = event.offsetY;
+        }
+        event.mx = event.pageX || event.clientX + document.body.scrollLeft;
+        // 计算鼠标指针的x轴距离
+        event.my = event.pageY || event.clientY + document.body.scrollTop;
+        // 计算鼠标指针的y轴距离
+        return event;  // 返回标准化的事件对象
+    }
+
+    //鼠标事件处理
+    document.onmousedown = function (event) {
+        event = e(event);  // 获取标准事件对象
+        startx = event.mx;  // 按下鼠标指针的x轴坐标
+        starty = event.my;  // 按下鼠标指针的y轴坐标
+        o = event.target;  // 获取当前拖放的元素
+        ox = parseInt(o.offsetLeft);  // 拖放元素的x轴坐标
+        oy = parseInt(o.offsetTop);  // 拖放元素的y轴坐标
+        timeInMs = Date.now();
+        console.log("start:" + startx + "," + starty);
+        actions.push({
+            "type": "start",
+            "x": startx,
+            "y": starty,
+            "t": 0,
+        });
+        document.onmousemove = move;  // 注册鼠标移动事件处理函数
+        document.onmouseup = stop;  // 注册松开鼠标事件处理函数
+    }
+
+    function move(event) {  // 鼠标移动处理函数
+        event = e(event);
+        var movex, movey, nowx, nowy;
+        movex = event.movementX
+        movey = event.movementY
+        nowx = event.mx
+        nowy = event.my
+        var t = Date.now() - timeInMs
+        timeInMs = Date.now();
+        console.log("move:" + movex + "," + movey);
+        actions.push({
+            "type": "move",
+            "x": nowx,
+            "y": nowy,
+            "t": t,
+        });
+    }
+
+    function stop(event) {  // 松开鼠标处理函数
+        event = e(event);
+        ox = parseInt(o.offsetLeft);  // 记录拖放元素的x轴坐标
+        oy = parseInt(o.offsetTop);  // 记录拖放元素的y轴坐标
+        mx = event.mx;  // 记录鼠标指针的x轴坐标
+        my = event.my;  // 记录鼠标指针的y轴坐标
+        var t = Date.now() - timeInMs
+        timeInMs = Date.now();
+        o = document.onmousemove = document.onmouseup = null;
+        // 释放所有操作对象
+        console.log("end:" + mx + "," + my);
+        actions.push({
+            "type": "end",
+            "x": mx,
+            "y": my,
+            "t": t,
+        });
+        $.ajax({
+            type: "post",
+            url: "/captchactions",
+            contentType: "application/json",
+            dataType: "json",
+            data: JSON.stringify(actions)
+        });
+        actions = []
+    }
 </script>
 </body>
 {{end}}
